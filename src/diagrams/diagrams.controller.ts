@@ -6,6 +6,7 @@ import {
   Patch,
   Param,
   Delete,
+  Query,
 } from '@nestjs/common';
 import { DiagramsService } from './diagrams.service';
 import type { CreateDiagramDto } from './dto/create-diagram.dto';
@@ -38,5 +39,10 @@ export class DiagramsController {
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.diagramsService.remove(id);
+  }
+
+  @Get(':userId')
+  findByUser(@Query('userId') userId: string) {
+    return this.diagramsService.findByOwner(userId);
   }
 }

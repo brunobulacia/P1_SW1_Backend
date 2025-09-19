@@ -75,6 +75,7 @@ model Diagram {
 model DiagramMember {
   id           String       @id @default(cuid())
   diagramId    String
+  username     String
   invitationId String       @unique
   role         MemberRole   @default(EDITOR)
   joinedAt     DateTime     @default(now())
@@ -97,7 +98,7 @@ model DiagramInvite {
   email     String?
   role      MemberRole @default(EDITOR)
   token     String     @unique
-  expiresAt DateTime
+  expiresAt DateTime?
   usedAt    DateTime?
 
   createdAt DateTime @default(now())

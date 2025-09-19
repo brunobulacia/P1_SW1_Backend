@@ -17,11 +17,11 @@ import { DiagramInvitesModule } from './diagram_invites/diagram_invites.module';
   ],
   controllers: [],
   providers: [
-    {
+    /*  {
       //PARA PONER EL GUARD DE JWT EN TODOS LOS ENDPOINTS PERRITOUUUU
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
-    },
+    }, */
   ],
 })
 export class AppModule {}

@@ -25,7 +25,9 @@ export class AuthService {
     }
   }
 
-  async login(loginDto: loginDto): Promise<{ access_token: string } | null> {
+  async login(
+    loginDto: loginDto,
+  ): Promise<{ access_token: string; user: User } | null> {
     try {
       const user = await this.prismaService.user.findUnique({
         where: { email: loginDto.email },
@@ -33,7 +35,7 @@ export class AuthService {
       if (user && bcrypt.compareSync(loginDto.password, user.password)) {
         const payload = { email: user.email, sub: user.id };
         const access_token = this.jwtService.sign(payload);
-        return { access_token };
+        return { access_token, user };
       }
       return null;
     } catch (error) {
