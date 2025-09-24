@@ -6,6 +6,7 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { DiagramsModule } from './diagrams/diagrams.module';
 import { DiagramMembersModule } from './diagram_members/diagram_members.module';
 import { DiagramInvitesModule } from './diagram_invites/diagram_invites.module';
+import { DiagramSocketModule } from './diagram-socket/diagram-socket.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { DiagramInvitesModule } from './diagram_invites/diagram_invites.module';
     DiagramsModule,
     DiagramMembersModule,
     DiagramInvitesModule,
+    DiagramSocketModule,
   ],
   controllers: [],
   providers: [
