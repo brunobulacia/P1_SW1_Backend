@@ -7,10 +7,7 @@ import {
   Param,
   Delete,
   Query,
-<<<<<<< HEAD
-=======
   NotFoundException,
->>>>>>> d31240d (Antes del desarollo colaborativo)
 } from '@nestjs/common';
 import { DiagramsService } from './diagrams.service';
 import type { CreateDiagramDto } from './dto/create-diagram.dto';
