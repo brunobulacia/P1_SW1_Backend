@@ -7,6 +7,10 @@ import {
   Param,
   Delete,
   Query,
+<<<<<<< HEAD
+=======
+  NotFoundException,
+>>>>>>> d31240d (Antes del desarollo colaborativo)
 } from '@nestjs/common';
 import { DiagramsService } from './diagrams.service';
 import type { CreateDiagramDto } from './dto/create-diagram.dto';
@@ -22,8 +26,11 @@ export class DiagramsController {
   }
 
   @Get()
-  findAll() {
-    return this.diagramsService.findAll();
+  findAll(@Query('userId') userId?: string) {
+    if (userId) {
+      return this.diagramsService.findByOwner(userId);
+    }
+    throw new NotFoundException('UserId query parameter is required');
   }
 
   @Get(':id')
@@ -34,6 +41,11 @@ export class DiagramsController {
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateDiagramDto: UpdateDiagramDto) {
     return this.diagramsService.update(id, updateDiagramDto);
+  }
+
+  @Delete('bulk')
+  bulkDelete(@Body('ids') ids: string[]) {
+    return this.diagramsService.bulkDelete(ids);
   }
 
   @Delete(':id')

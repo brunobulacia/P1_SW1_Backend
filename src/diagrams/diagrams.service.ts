@@ -47,6 +47,7 @@ export class DiagramsService {
     id: string,
     updateDiagramDto: UpdateDiagramDto,
   ): Promise<Diagram> {
+    console.log(id, updateDiagramDto);
     const updatedDiagram = await this.prismaService.diagram.update({
       where: { id },
       data: updateDiagramDto,
@@ -78,10 +79,25 @@ export class DiagramsService {
       where: { ownerId, isActive: true },
     });
 
-    if (!foundDiagrams) {
-      throw new NotFoundException(`No diagrams found for owner ${ownerId}`);
+    if (foundDiagrams.length === 0) {
+      return [];
     }
 
     return foundDiagrams;
+  }
+
+  async bulkDelete(ids: string[]): Promise<Diagram[]> {
+    const deletedDiagrams = await this.prismaService.diagram.updateMany({
+      where: { id: { in: ids } },
+      data: { isActive: false },
+    });
+
+    if (deletedDiagrams.count === 0) {
+      throw new NotFoundException('No diagrams were deleted');
+    }
+
+    return this.prismaService.diagram.findMany({
+      where: { id: { in: ids } },
+    });
   }
 }
