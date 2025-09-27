@@ -14,7 +14,6 @@ datasource db {
 }
 
 enum MemberRole {
-  VIEWER
   EDITOR
   ADMIN
 }
@@ -54,7 +53,6 @@ model Diagram {
   ownerId       String
   name          String
   description   String?
-  // Modelo canónico del diagrama (tu JSON “semántico”)
   model         Json            @default("{}")
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
@@ -63,44 +61,30 @@ model Diagram {
   diagramInvite DiagramInvite[]
   isActive      Boolean         @default(true)
 
-  /**
-   * exports       ExportJob[]
-   * postmanFile   PostmanCollection?
-   * snapshots    DiagramSnapshot[]
-   */
-
   @@index([ownerId])
 }
 
 model DiagramMember {
-  id           String       @id @default(cuid())
+  id           String        @id @default(cuid())
   diagramId    String
   username     String
-  invitationId String       @unique
-  role         MemberRole   @default(EDITOR)
-  joinedAt     DateTime     @default(now())
-  status       MemberStatus @default(ACTIVE)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  isActive     Boolean      @default(true)
+  invitationId String        @unique
+  joinedAt     DateTime      @default(now())
+  status       MemberStatus  @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  isActive     Boolean       @default(true)
+  diagram      Diagram       @relation(fields: [diagramId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  invitation   DiagramInvite @relation(fields: [invitationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
-  diagram    Diagram       @relation(fields: [diagramId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  invitation DiagramInvite @relation(fields: [invitationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-
-  @@unique([diagramId, invitationId]) // una invitación una vez por diagrama
+  @@unique([diagramId, invitationId])
   @@index([invitationId])
 }
 
-// Invitaciones por link o email (para colaborar)
 model DiagramInvite {
-  id        String     @id @default(cuid())
+  id        String   @id @default(cuid())
   diagramId String
-  email     String?
-  role      MemberRole @default(EDITOR)
-  token     String     @unique
-  expiresAt DateTime?
-  usedAt    DateTime?
-
+  token     String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   isActive  Boolean  @default(true)
@@ -109,51 +93,4 @@ model DiagramInvite {
   DiagramMember DiagramMember?
 
   @@index([diagramId])
-  @@index([email])
 }
-
-// Versionado/snapshots para “undo grande”, auditoría o checkpoint de colaboración
-/**
- * model DiagramSnapshot {
- * id          String   @id @default(cuid())
- * diagramId   String
- * label       String?
- * createdById String?
- * createdAt   DateTime @default(now())
- * // Guardar ambos te da flexibilidad
- * model Json
- * ydoc  Bytes?
- * diagram Diagram @relation(fields: [diagramId], references: [id], onDelete: Cascade)
- * @@index([diagramId])
- * @@index([createdAt])
- * }
- */
-
-// Exportaciones (código Spring Boot ZIP y/o colección Postman)
-/**
- * model ExportJob {
- * id          String       @id @default(cuid())
- * diagramId   String
- * type        ExportType
- * status      ExportStatus @default(QUEUED)
- * artifactUrl String? // dónde quedó el ZIP/JSON
- * log         String? // errores/diagnóstico
- * startedAt   DateTime?
- * finishedAt  DateTime?
- * createdAt   DateTime     @default(now())
- * diagram Diagram @relation(fields: [diagramId], references: [id], onDelete: Cascade, onUpdate: Cascade)
- * @@index([diagramId])
- * @@index([type, status])
- * }
- * // Guarda la colección generada por comodidad/versionado
- * model PostmanCollection {
- * id        String   @id @default(cuid())
- * diagramId String   @unique
- * name      String
- * json      Json
- * // version   String? // semver si la regeneras
- * createdAt DateTime @default(now())
- * diagram Diagram @relation(fields: [diagramId], references: [id], onDelete: Cascade, onUpdate: Cascade)
- * @@index([diagramId])
- * }
- */

@@ -1,11 +1,5 @@
-/*
-  Warnings:
-
-  - Added the required column `updatedAt` to the `User` table without a default value. This is not possible if the table is not empty.
-
-*/
 -- CreateEnum
-CREATE TYPE "public"."MemberRole" AS ENUM ('VIEWER', 'EDITOR', 'ADMIN');
+CREATE TYPE "public"."MemberRole" AS ENUM ('EDITOR', 'ADMIN');
 
 -- CreateEnum
 CREATE TYPE "public"."MemberStatus" AS ENUM ('ACTIVE', 'PENDING', 'INACTIVE');
@@ -16,9 +10,18 @@ CREATE TYPE "public"."ExportType" AS ENUM ('SPRING_BOOT', 'POSTMAN');
 -- CreateEnum
 CREATE TYPE "public"."ExportStatus" AS ENUM ('QUEUED', 'IN_PROGRESS', 'COMPLETED', 'FAILED');
 
--- AlterTable
-ALTER TABLE "public"."User" ADD COLUMN     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-ADD COLUMN     "updatedAt" TIMESTAMP(3) NOT NULL;
+-- CreateTable
+CREATE TABLE "public"."User" (
+    "id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "username" TEXT NOT NULL,
+    "password" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+
+    CONSTRAINT "User_pkey" PRIMARY KEY ("id")
+);
 
 -- CreateTable
 CREATE TABLE "public"."Diagram" (
@@ -26,9 +29,10 @@ CREATE TABLE "public"."Diagram" (
     "ownerId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
-    "model" JSONB NOT NULL,
+    "model" JSONB NOT NULL DEFAULT '{}',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
 
     CONSTRAINT "Diagram_pkey" PRIMARY KEY ("id")
 );
@@ -37,12 +41,13 @@ CREATE TABLE "public"."Diagram" (
 CREATE TABLE "public"."DiagramMember" (
     "id" TEXT NOT NULL,
     "diagramId" TEXT NOT NULL,
+    "username" TEXT NOT NULL,
     "invitationId" TEXT NOT NULL,
-    "role" "public"."MemberRole" NOT NULL DEFAULT 'EDITOR',
     "joinedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "status" "public"."MemberStatus" NOT NULL DEFAULT 'ACTIVE',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
 
     CONSTRAINT "DiagramMember_pkey" PRIMARY KEY ("id")
 );
@@ -51,16 +56,16 @@ CREATE TABLE "public"."DiagramMember" (
 CREATE TABLE "public"."DiagramInvite" (
     "id" TEXT NOT NULL,
     "diagramId" TEXT NOT NULL,
-    "email" TEXT,
-    "role" "public"."MemberRole" NOT NULL DEFAULT 'EDITOR',
     "token" TEXT NOT NULL,
-    "expiresAt" TIMESTAMP(3) NOT NULL,
-    "usedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
 
     CONSTRAINT "DiagramInvite_pkey" PRIMARY KEY ("id")
 );
+
+-- CreateIndex
+CREATE UNIQUE INDEX "User_email_key" ON "public"."User"("email");
 
 -- CreateIndex
 CREATE INDEX "Diagram_ownerId_idx" ON "public"."Diagram"("ownerId");
@@ -79,9 +84,6 @@ CREATE UNIQUE INDEX "DiagramInvite_token_key" ON "public"."DiagramInvite"("token
 
 -- CreateIndex
 CREATE INDEX "DiagramInvite_diagramId_idx" ON "public"."DiagramInvite"("diagramId");
-
--- CreateIndex
-CREATE INDEX "DiagramInvite_email_idx" ON "public"."DiagramInvite"("email");
 
 -- AddForeignKey
 ALTER TABLE "public"."Diagram" ADD CONSTRAINT "Diagram_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "public"."User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
