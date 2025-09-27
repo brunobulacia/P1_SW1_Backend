@@ -70,4 +70,17 @@ export class DiagramInvitesService {
     }
     return deletedDiagramInvite;
   }
+
+  async getDiagramByInviteToken(token: string) {
+    const invite = await this.prismaService.diagramInvite.findUnique({
+      where: { token },
+      include: { diagram: true },
+    });
+
+    if (!invite || !invite.isActive) {
+      throw new NotFoundException('Invalid or inactive invite token');
+    }
+
+    return invite.diagram;
+  }
 }

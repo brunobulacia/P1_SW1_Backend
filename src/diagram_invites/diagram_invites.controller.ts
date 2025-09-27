@@ -42,4 +42,9 @@ export class DiagramInvitesController {
   remove(@Param('id') id: string) {
     return this.diagramInvitesService.remove(id);
   }
+
+  @Get('token/:token')
+  findByToken(@Param('token') token: string) {
+    return this.diagramInvitesService.getDiagramByInviteToken(token);
+  }
 }

@@ -7,5 +7,6 @@ import { PrismaModule } from 'src/prisma/prisma.module';
   imports: [PrismaModule],
   controllers: [DiagramInvitesController],
   providers: [DiagramInvitesService],
+  exports: [DiagramInvitesService],
 })
 export class DiagramInvitesModule {}

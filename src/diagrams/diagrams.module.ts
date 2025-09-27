@@ -7,5 +7,6 @@ import { PrismaModule } from 'src/prisma/prisma.module';
   imports: [PrismaModule],
   controllers: [DiagramsController],
   providers: [DiagramsService],
+  exports: [DiagramsService], // <-- agrega esto
 })
 export class DiagramsModule {}
