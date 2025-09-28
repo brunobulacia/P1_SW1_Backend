@@ -45,4 +45,38 @@ export class ZipExportService {
       archive.finalize();
     });
   }
+
+  async exportFolderAsZip(
+    folderPath: string,
+    zipFilePath: string,
+  ): Promise<void> {
+    if (!fs.existsSync(folderPath)) {
+      throw new Error(`Folder not found at ${folderPath}`);
+    }
+    const output = fs.createWriteStream(zipFilePath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    return new Promise((resolve, reject) => {
+      output.on('close', () => {
+        const bytes = archive.pointer();
+        if (!bytes || bytes === 0) {
+          return reject(new Error('Generated zip is empty'));
+        }
+        return resolve();
+      });
+
+      archive.on('warning', (err: any) => {
+        console.warn('Archiver warning', err);
+      });
+
+      archive.on('error', (err: any) => reject(err));
+
+      archive.pipe(output);
+      const dirPathToAdd = folderPath.endsWith(path.sep)
+        ? folderPath
+        : folderPath + path.sep;
+      archive.directory(dirPathToAdd, false);
+      archive.finalize();
+    });
+  }
 }
