@@ -12,6 +12,7 @@ import {
 import * as fs from 'fs';
 import { ZipExportService } from './zip-export.service';
 import { SpringGeneratorService } from './spring-generator.service';
+import { PostmanGeneratorService } from './postman-generator.service';
 import { DiagramsService } from 'src/diagrams/diagrams.service';
 import type { Response } from 'express';
 import * as path from 'path';
@@ -21,6 +22,7 @@ export class ExportController {
   constructor(
     private readonly zipExportService: ZipExportService,
     private readonly springGeneratorService: SpringGeneratorService,
+    private readonly postmanGeneratorService: PostmanGeneratorService,
     private readonly diagramsService: DiagramsService,
   ) {}
 
@@ -97,5 +99,41 @@ export class ExportController {
         fs.unlink(zipFilePath, () => {});
       } catch {}
     });
+  }
+
+  // Generar collections de Postman desde el modelo
+  @Post('generate-postman')
+  async generatePostmanFromModel(@Body() body: any, @Res() res: Response) {
+    const collections =
+      this.postmanGeneratorService.generateCollectionsFromModel(body);
+
+    res.set({
+      'Content-Type': 'application/json',
+      'Content-Disposition': 'attachment; filename="postman-collections.json"',
+    });
+
+    res.json(collections);
+  }
+
+  // Generar collections de Postman desde un diagrama por ID
+  @Get('generate-postman/:id')
+  async generatePostmanFromDiagram(
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const diagram = await this.diagramsService.findOne(id).catch(() => null);
+    if (!diagram)
+      throw new NotFoundException(`Diagram with id ${id} not found`);
+
+    const model = (diagram as any).model;
+    const collections =
+      this.postmanGeneratorService.generateCollectionsFromModel(model);
+
+    res.set({
+      'Content-Type': 'application/json',
+      'Content-Disposition': 'attachment; filename="postman-collections.json"',
+    });
+
+    res.json(collections);
   }
 }
