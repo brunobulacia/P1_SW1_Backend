@@ -1,3 +1,4 @@
+//spring-generator.service.ts
 import { Injectable } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -42,7 +43,7 @@ export class SpringGeneratorService {
     model: DiagramModel,
     outputRoot?: string,
   ): Promise<void> {
-    // compute base package path in the output root (defaults to demo project)
+    // base package path
     const basePackagePath = outputRoot
       ? path.join(outputRoot, 'src', 'main', 'java', 'com', 'example', 'demo')
       : path.join(
@@ -56,17 +57,16 @@ export class SpringGeneratorService {
           'demo',
         );
 
-    // if generating into an explicit outputRoot, copy template skeleton from demo/
+    // si se especifica outputRoot, copiar skeleton demo/
     if (outputRoot) {
       const templateRoot = path.join(process.cwd(), 'demo');
-      // copy pom.xml
       try {
         const pomSrc = path.join(templateRoot, 'pom.xml');
         if (fs.existsSync(pomSrc)) {
           this.ensureDir(outputRoot);
           fs.copyFileSync(pomSrc, path.join(outputRoot, 'pom.xml'));
         }
-        // copy mvnw and mvnw.cmd
+
         const mvnw = path.join(templateRoot, 'mvnw');
         if (fs.existsSync(mvnw)) {
           fs.copyFileSync(mvnw, path.join(outputRoot, 'mvnw'));
@@ -77,13 +77,10 @@ export class SpringGeneratorService {
           fs.copyFileSync(mvnwCmd, path.join(outputRoot, 'mvnw.cmd'));
         }
 
-        // copy .mvn folder if exists
         const mvnFolder = path.join(templateRoot, '.mvn');
-        if (fs.existsSync(mvnFolder)) {
+        if (fs.existsSync(mvnFolder))
           this.copyRecursiveSync(mvnFolder, path.join(outputRoot, '.mvn'));
-        }
 
-        // copy resources
         const resourcesSrc = path.join(
           templateRoot,
           'src',
@@ -97,7 +94,6 @@ export class SpringGeneratorService {
           );
         }
 
-        // copy DemoApplication.java (application entry)
         const demoAppSrc = path.join(
           templateRoot,
           'src',
@@ -125,12 +121,11 @@ export class SpringGeneratorService {
           );
         }
       } catch (err) {
-        // non-fatal: continue generation even if template copy fails
         console.warn('Warning copying template files:', err);
       }
     }
 
-    // ensure base folders
+    // ensure dirs
     this.ensureDir(basePackagePath);
     const modelDir = path.join(basePackagePath, 'model');
     const repoDir = path.join(basePackagePath, 'repository');
@@ -144,7 +139,7 @@ export class SpringGeneratorService {
     const nodes = model.nodes || [];
     const edges = model.edges || [];
 
-    // Prepare maps
+    // maps
     const nodeIdToClass: Record<string, string> = {};
     const attributesMap: Record<string, ModelNodeAttr[]> = {};
     for (const node of nodes) {
@@ -153,40 +148,35 @@ export class SpringGeneratorService {
       attributesMap[className] = node.data.attributes || [];
     }
 
-    // relations map: className -> list of field strings and imports
     const relationsMap: Record<
       string,
-      { fields: string[]; imports: Set<string> }
+      { fields: string[]; imports: Set<string>; relationshipCount: Record<string, number> }
     > = {};
     for (const node of nodes) {
       const className = nodeIdToClass[node.id];
-      relationsMap[className] = { fields: [], imports: new Set() };
+      relationsMap[className] = { fields: [], imports: new Set(), relationshipCount: {} };
     }
 
     const isMany = (card?: string) => !!card && card.includes('*');
 
     for (const edge of edges) {
-      const sourceId = edge.source;
-      const targetId = edge.target;
-      const sourceClass = nodeIdToClass[sourceId];
-      const targetClass = nodeIdToClass[targetId];
+      const sourceClass = nodeIdToClass[edge.source];
+      const targetClass = nodeIdToClass[edge.target];
       if (!sourceClass || !targetClass) continue;
 
       const sourceCard = edge.data?.sourceCardinality;
       const targetCard = edge.data?.targetCardinality;
 
-      // Interpret cardinalities: targetCard '*' means source has many targets (source -> List<Target>)
       const sourceHasManyTargets = isMany(targetCard);
       const targetHasManySources = isMany(sourceCard);
 
-      // names
       const sourceLower =
         sourceClass.charAt(0).toLowerCase() + sourceClass.slice(1);
       const targetLower =
         targetClass.charAt(0).toLowerCase() + targetClass.slice(1);
 
       if (sourceHasManyTargets && targetHasManySources) {
-        // Many-to-Many: make source owning side
+        // Many-to-Many (lado source propietario)
         relationsMap[sourceClass].imports.add('java.util.List');
         relationsMap[sourceClass].imports.add('jakarta.persistence.ManyToMany');
         relationsMap[sourceClass].imports.add('jakarta.persistence.JoinTable');
@@ -195,7 +185,10 @@ export class SpringGeneratorService {
           'com.fasterxml.jackson.annotation.JsonManagedReference',
         );
         relationsMap[sourceClass].fields.push(
-          `    @ManyToMany\n    @JoinTable(name = "${sourceLower}_${targetLower}", joinColumns = @JoinColumn(name = "${sourceLower}_id"), inverseJoinColumns = @JoinColumn(name = "${targetLower}_id"))\n    @JsonManagedReference\n    private List<${targetClass}> ${targetLower}s;`,
+          `    @ManyToMany
+    @JoinTable(name = "${sourceLower}_${targetLower}", joinColumns = @JoinColumn(name = "${sourceLower}_id"), inverseJoinColumns = @JoinColumn(name = "${targetLower}_id"))
+    @JsonManagedReference("${sourceLower}")
+    private List<${targetClass}> ${targetLower}s;`,
         );
 
         relationsMap[targetClass].imports.add('java.util.List');
@@ -204,17 +197,27 @@ export class SpringGeneratorService {
           'com.fasterxml.jackson.annotation.JsonBackReference',
         );
         relationsMap[targetClass].fields.push(
-          `    @ManyToMany(mappedBy = "${targetLower}s")\n    @JsonBackReference\n    private List<${sourceClass}> ${sourceLower}s;`,
+          `    @ManyToMany(mappedBy = "${targetLower}s")
+    @JsonBackReference("${targetLower}")
+    private List<${sourceClass}> ${sourceLower}s;`,
         );
       } else if (sourceHasManyTargets) {
-        // source has List<target>, target has ManyToOne to source
+        // OneToMany (source) / ManyToOne (target)
         relationsMap[sourceClass].imports.add('java.util.List');
         relationsMap[sourceClass].imports.add('jakarta.persistence.OneToMany');
         relationsMap[sourceClass].imports.add(
           'com.fasterxml.jackson.annotation.JsonManagedReference',
         );
+        
+        // Contar relaciones para evitar conflictos de nombres
+        const relationKey = `${sourceClass}-${targetClass}`;
+        const count = relationsMap[sourceClass].relationshipCount[relationKey] || 0;
+        relationsMap[sourceClass].relationshipCount[relationKey] = count + 1;
+        
         relationsMap[sourceClass].fields.push(
-          `    @OneToMany(mappedBy = "${sourceLower}")\n    @JsonManagedReference\n    private List<${targetClass}> ${targetLower}s;`,
+          `    @OneToMany(mappedBy = "${sourceLower}")
+    @JsonManagedReference("${sourceLower}")
+    private List<${targetClass}> ${targetLower}s;`,
         );
 
         relationsMap[targetClass].imports.add('jakarta.persistence.ManyToOne');
@@ -222,18 +225,35 @@ export class SpringGeneratorService {
         relationsMap[targetClass].imports.add(
           'com.fasterxml.jackson.annotation.JsonBackReference',
         );
+        
+        // Contar relaciones múltiples hacia la misma clase target
+        const targetRelationKey = `${targetClass}-${sourceClass}`;
+        const targetCount = relationsMap[targetClass].relationshipCount[targetRelationKey] || 0;
+        relationsMap[targetClass].relationshipCount[targetRelationKey] = targetCount + 1;
+        
         relationsMap[targetClass].fields.push(
-          `    @ManyToOne\n    @JoinColumn(name = "${sourceLower}_id")\n    @JsonBackReference\n    private ${sourceClass} ${sourceLower};`,
+          `    @ManyToOne
+    @JoinColumn(name = "${sourceLower}_id")
+    @JsonBackReference("${sourceLower}")
+    private ${sourceClass} ${sourceLower};`,
         );
       } else if (targetHasManySources) {
-        // target has List<source>, source has ManyToOne to target
+        // OneToMany (target) / ManyToOne (source)
         relationsMap[targetClass].imports.add('java.util.List');
         relationsMap[targetClass].imports.add('jakarta.persistence.OneToMany');
         relationsMap[targetClass].imports.add(
           'com.fasterxml.jackson.annotation.JsonManagedReference',
         );
+        
+        // Contar relaciones para evitar conflicto
+        const relationKey = `${targetClass}-${sourceClass}`;
+        const count = relationsMap[targetClass].relationshipCount[relationKey] || 0;
+        relationsMap[targetClass].relationshipCount[relationKey] = count + 1;
+        
         relationsMap[targetClass].fields.push(
-          `    @OneToMany(mappedBy = "${targetLower}")\n    @JsonManagedReference\n    private List<${sourceClass}> ${sourceLower}s;`,
+          `    @OneToMany(mappedBy = "${targetLower}")
+    @JsonManagedReference("${targetLower}")
+    private List<${sourceClass}> ${sourceLower}s;`,
         );
 
         relationsMap[sourceClass].imports.add('jakarta.persistence.ManyToOne');
@@ -241,32 +261,50 @@ export class SpringGeneratorService {
         relationsMap[sourceClass].imports.add(
           'com.fasterxml.jackson.annotation.JsonBackReference',
         );
+        
+        // Contar relaciones múltiples hacia la misma clase source
+        const sourceRelationKey = `${sourceClass}-${targetClass}`;
+        const sourceCount = relationsMap[sourceClass].relationshipCount[sourceRelationKey] || 0;
+        relationsMap[sourceClass].relationshipCount[sourceRelationKey] = sourceCount + 1;
+        
         relationsMap[sourceClass].fields.push(
-          `    @ManyToOne\n    @JoinColumn(name = "${targetLower}_id")\n    @JsonBackReference\n    private ${targetClass} ${targetLower};`,
+          `    @ManyToOne
+    @JoinColumn(name = "${targetLower}_id")
+    @JsonBackReference("${targetLower}")
+    private ${targetClass} ${targetLower};`,
         );
       } else {
-        // One-to-One (default)
+        // One-to-One
         relationsMap[sourceClass].imports.add('jakarta.persistence.OneToOne');
         relationsMap[sourceClass].imports.add('jakarta.persistence.JoinColumn');
         relationsMap[sourceClass].imports.add(
           'com.fasterxml.jackson.annotation.JsonManagedReference',
         );
         relationsMap[sourceClass].fields.push(
-          `    @OneToOne\n    @JoinColumn(name = "${targetLower}_id")\n    @JsonManagedReference\n    private ${targetClass} ${targetLower};`,
+          `    @OneToOne
+    @JoinColumn(name = "${targetLower}_id")
+    @JsonManagedReference("${sourceLower}")
+    private ${targetClass} ${targetLower};`,
         );
 
         relationsMap[targetClass].imports.add('jakarta.persistence.OneToOne');
+        relationsMap[targetClass].imports.add(
+          'com.fasterxml.jackson.annotation.JsonBackReference',
+        );
         relationsMap[targetClass].fields.push(
-          `    @OneToOne(mappedBy = "${targetLower}")\n    @JsonBackReference\n    private ${sourceClass} ${sourceLower};`,
+          `    @OneToOne(mappedBy = "${targetLower}")
+    @JsonBackReference("${targetLower}")
+    private ${sourceClass} ${sourceLower};`,
         );
       }
     }
 
-    // Generate files with relations
+    // generar archivos
     for (const node of nodes) {
       const className = nodeIdToClass[node.id];
       const attributes = attributesMap[className] || [];
       const rel = relationsMap[className];
+
       const java = this.buildEntityWithRelations(className, attributes, rel);
       fs.writeFileSync(path.join(modelDir, `${className}.java`), java, 'utf8');
 
@@ -284,7 +322,7 @@ export class SpringGeneratorService {
         'utf8',
       );
 
-      const ctrl = this.buildController(className);
+      const ctrl = this.buildController(className); // <— con produces/consumes
       fs.writeFileSync(
         path.join(controllerDir, `${className}Controller.java`),
         ctrl,
@@ -294,9 +332,7 @@ export class SpringGeneratorService {
   }
 
   private ensureDir(dir: string) {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   }
 
   private copyRecursiveSync(src: string, dest: string) {
@@ -315,7 +351,6 @@ export class SpringGeneratorService {
   }
 
   private sanitizeClassName(label: string) {
-    // Assume label is valid and capitalize
     return label
       .replace(/[^a-zA-Z0-9]/g, '')
       .replace(/^(.)/, (c) => c.toUpperCase());
@@ -334,45 +369,112 @@ export class SpringGeneratorService {
     }
   }
 
-  private buildEntity(className: string, attributes: ModelNodeAttr[]) {
-    const fields: string[] = [];
-    let hasId = attributes && attributes.some((a) => a.name === 'id');
-    if (!hasId) {
-      fields.push(
-        `    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;`,
-      );
-    } else {
-      // keep id but always use Long to be consistent with services
-      fields.push(`    @Id\n    private Long id;`);
-    }
-
-    for (const attr of attributes) {
-      if (attr.name === 'id') continue;
-      const t = this.mapType(attr.type);
-      fields.push(`    private ${t} ${attr.name};`);
-    }
-
-    const imports = [
-      'import jakarta.persistence.*;',
-      'import lombok.Data;',
-      'import com.fasterxml.jackson.annotation.JsonManagedReference;',
-    ];
-
-    const body = `package com.example.demo.model;\n\n${imports.join('\n')}\n\n@Data\n@Entity\npublic class ${className} {\n${fields.join('\n\n')}\n}`;
-    return body;
-  }
-
   private buildRepository(className: string) {
-    return `package com.example.demo.repository;\n\nimport com.example.demo.model.${className};\nimport org.springframework.data.jpa.repository.JpaRepository;\nimport org.springframework.stereotype.Repository;\n\n@Repository\npublic interface ${className}Repository extends JpaRepository<${className}, Long> {\n}\n`;
+    return `package com.example.demo.repository;
+
+import com.example.demo.model.${className};
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public interface ${className}Repository extends JpaRepository<${className}, Long> {
+}
+`;
   }
 
   private buildService(className: string) {
-    return `package com.example.demo.service;\n\nimport com.example.demo.model.${className};\nimport com.example.demo.repository.${className}Repository;\nimport org.springframework.stereotype.Service;\nimport java.util.List;\nimport java.util.Optional;\n\n@Service\npublic class ${className}Service {\n    private final ${className}Repository repository;\n\n    public ${className}Service(${className}Repository repository) {\n        this.repository = repository;\n    }\n\n    public List<${className}> findAll() {\n        return repository.findAll();\n    }\n\n    public Optional<${className}> findById(Long id) {\n        return repository.findById(id);\n    }\n\n    public ${className} create(${className} entity) {\n        return repository.save(entity);\n    }\n\n    public ${className} update(Long id, ${className} entity) {\n        entity.setId(id);\n        return repository.save(entity);\n    }\n\n    public void delete(Long id) {\n        repository.deleteById(id);\n    }\n}\n`;
+    return `package com.example.demo.service;
+
+import com.example.demo.model.${className};
+import com.example.demo.repository.${className}Repository;
+import org.springframework.stereotype.Service;
+import java.util.List;
+import java.util.Optional;
+
+@Service
+public class ${className}Service {
+    private final ${className}Repository repository;
+
+    public ${className}Service(${className}Repository repository) {
+        this.repository = repository;
+    }
+
+    public List<${className}> findAll() {
+        return repository.findAll();
+    }
+
+    public Optional<${className}> findById(Long id) {
+        return repository.findById(id);
+    }
+
+    public ${className} create(${className} entity) {
+        return repository.save(entity);
+    }
+
+    public ${className} update(Long id, ${className} entity) {
+        entity.setId(id);
+        return repository.save(entity);
+    }
+
+    public void delete(Long id) {
+        repository.deleteById(id);
+    }
+}
+`;
   }
 
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  // CAMBIO IMPORTANTE: controller con produces/consumes explícitos
+  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
   private buildController(className: string) {
     const lower = className.charAt(0).toLowerCase() + className.slice(1);
-    return `package com.example.demo.controller;\n\nimport com.example.demo.model.${className};\nimport com.example.demo.service.${className}Service;\nimport org.springframework.http.ResponseEntity;\nimport org.springframework.web.bind.annotation.*;\nimport java.util.List;\n\n@RestController\n@RequestMapping("/api/${lower}")\npublic class ${className}Controller {\n    private final ${className}Service service;\n\n    public ${className}Controller(${className}Service service) {\n        this.service = service;\n    }\n\n    @GetMapping\n    public List<${className}> all() {\n        return service.findAll();\n    }\n\n    @GetMapping("/{id}")\n    public ResponseEntity<${className}> get(@PathVariable Long id) {\n        return service.findById(id).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());\n    }\n\n    @PostMapping\n    public ${className} create(@RequestBody ${className} entity) {\n        return service.create(entity);\n    }\n\n    @PutMapping("/{id}")\n    public ${className} update(@PathVariable Long id, @RequestBody ${className} entity) {\n        return service.update(id, entity);\n    }\n\n    @DeleteMapping("/{id}")\n    public ResponseEntity<Void> delete(@PathVariable Long id) {\n        service.delete(id);\n        return ResponseEntity.noContent().build();\n    }\n}\n`;
+    return `package com.example.demo.controller;
+
+import com.example.demo.model.${className};
+import com.example.demo.service.${className}Service;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/${lower}")
+public class ${className}Controller {
+    private final ${className}Service service;
+
+    public ${className}Controller(${className}Service service) {
+        this.service = service;
+    }
+
+    @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
+    public List<${className}> all() {
+        return service.findAll();
+    }
+
+    @GetMapping(path = "/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<${className}> get(@PathVariable Long id) {
+        return service.findById(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    public ${className} create(@RequestBody ${className} entity) {
+        return service.create(entity);
+    }
+
+    @PutMapping(path = "/{id}", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    public ${className} update(@PathVariable Long id, @RequestBody ${className} entity) {
+        return service.update(id, entity);
+    }
+
+    @DeleteMapping(path = "/{id}")
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        service.delete(id);
+        return ResponseEntity.noContent().build();
+    }
+}
+`;
   }
 
   private buildEntityWithRelations(
@@ -381,42 +483,61 @@ export class SpringGeneratorService {
     rel: { fields: string[]; imports: Set<string> } | undefined,
   ) {
     const fields: string[] = [];
-    let hasId = attributes && attributes.some((a) => a.name === 'id');
+
+    // id
+    const hasId = attributes?.some((a) => a.name === 'id');
     if (!hasId) {
       fields.push(
-        `    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;`,
+        `    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;`,
       );
     } else {
-      // always use Long for id fields for consistency
-      fields.push(`    @Id\n    private Long id;`);
+      fields.push(
+        `    @Id
+    private Long id;`,
+      );
     }
 
+    // atributos simples
     for (const attr of attributes) {
       if (attr.name === 'id') continue;
       const t = this.mapType(attr.type);
       fields.push(`    private ${t} ${attr.name};`);
     }
 
-    // add relation fields
+    // relaciones
     const relFields = rel?.fields || [];
 
-    // build imports
+    // imports
     const imports = new Set<string>([
       'import jakarta.persistence.*;',
       'import lombok.Data;',
+      'import com.fasterxml.jackson.annotation.JsonBackReference;',
+      'import com.fasterxml.jackson.annotation.JsonManagedReference;',
     ]);
-    if (rel && rel.imports) {
+    if (rel?.imports) {
       for (const imp of rel.imports) imports.add(`import ${imp};`);
     }
-    // always include Jackson annotations used in fields
-    imports.add('import com.fasterxml.jackson.annotation.JsonBackReference;');
-    imports.add(
-      'import com.fasterxml.jackson.annotation.JsonManagedReference;',
-    );
 
-    const importsArr = Array.from(imports);
+    // ⬇️⮕ AQUÍ construimos el body con @NoArgsConstructor y @AllArgsConstructor
+    const body = `package com.example.demo.model;
 
-    const body = `package com.example.demo.model;\n\n${importsArr.join('\n')}\n\n@Data\n@Entity\npublic class ${className} {\n${fields.join('\n\n')}\n\n${relFields.join('\n\n')}\n}`;
+${Array.from(imports).join('\n')}
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Entity
+public class ${className} {
+${fields.join('\n\n')}
+
+${relFields.join('\n\n')}
+}`;
+
     return body;
   }
+  // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 }
