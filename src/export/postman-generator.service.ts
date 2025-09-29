@@ -161,6 +161,11 @@ export class PostmanGeneratorService {
           body: {
             mode: 'raw',
             raw: JSON.stringify(exampleBody, null, 2),
+            options: {
+              raw: {
+                language: 'json',
+              },
+            },
           },
           url: {
             raw: `${baseUrl}${endpoint}`,
@@ -190,6 +195,11 @@ export class PostmanGeneratorService {
           body: {
             mode: 'raw',
             raw: JSON.stringify(exampleBody, null, 2),
+            options: {
+              raw: {
+                language: 'json',
+              },
+            },
           },
           url: {
             raw: `${baseUrl}${endpoint}/{{${lowerClassName}Id}}`,

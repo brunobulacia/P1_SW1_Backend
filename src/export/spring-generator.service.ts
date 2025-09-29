@@ -483,7 +483,7 @@ public class ${idClassName} implements Serializable {
         relationsMap[sourceClass].fields.push(
           `    @OneToOne
     @JoinColumn(name = "${targetLower}_id")
-    @JsonManagedReference("${sourceLower}")
+    @JsonManagedReference("${sourceLower}_${targetLower}")
     private ${targetClass} ${targetLower};`,
         );
 
@@ -493,7 +493,7 @@ public class ${idClassName} implements Serializable {
         );
         relationsMap[targetClass].fields.push(
           `    @OneToOne(mappedBy = "${targetLower}")
-    @JsonBackReference("${targetLower}")
+    @JsonBackReference("${sourceLower}_${targetLower}")
     private ${sourceClass} ${sourceLower};`,
         );
       }
