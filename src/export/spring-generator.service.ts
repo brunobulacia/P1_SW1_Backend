@@ -25,6 +25,7 @@ interface ModelEdge {
     label?: string;
     sourceCardinality?: string;
     targetCardinality?: string;
+    associationClass?: string;
   };
   type?: string;
   source: string;
@@ -150,14 +151,70 @@ export class SpringGeneratorService {
 
     const relationsMap: Record<
       string,
-      { fields: string[]; imports: Set<string>; relationshipCount: Record<string, number> }
+      {
+        fields: string[];
+        imports: Set<string>;
+        relationshipCount: Record<string, number>;
+        compositionChild?: {
+          idClassName: string;
+          parentClass: string;
+          parentLower: string;
+          childIdJavaType: string;
+        };
+        inheritance?: {
+          isParent: boolean;
+          isChild: boolean;
+          parentClass?: string;
+          discriminatorValue?: string;
+        };
+      }
     > = {};
     for (const node of nodes) {
       const className = nodeIdToClass[node.id];
-      relationsMap[className] = { fields: [], imports: new Set(), relationshipCount: {} };
+      relationsMap[className] = {
+        fields: [],
+        imports: new Set(),
+        relationshipCount: {},
+      };
     }
 
     const isMany = (card?: string) => !!card && card.includes('*');
+
+    // Mapa de herencia: padre → hijos y hijo → padre
+    const parentToChildren: Record<string, string[]> = {};
+    const childToParent: Record<string, string> = {};
+    for (const edge of edges) {
+      const isInheritance =
+        edge.data?.type === 'inheritance' || edge.type === 'inheritance';
+      if (!isInheritance) continue;
+      const parentClass = nodeIdToClass[edge.source];
+      const childClass = nodeIdToClass[edge.target];
+      if (!parentClass || !childClass) continue;
+      parentToChildren[parentClass] = parentToChildren[parentClass] || [];
+      parentToChildren[parentClass].push(childClass);
+      childToParent[childClass] = parentClass;
+    }
+
+    // Marcar metadata de herencia en relationsMap
+    for (const className of Object.keys(relationsMap)) {
+      const isParent = !!parentToChildren[className]?.length;
+      const parentClass = childToParent[className];
+      const isChild = !!parentClass;
+      if (isParent || isChild) {
+        const discriminatorValue = isChild
+          ? className.charAt(0).toUpperCase()
+          : undefined;
+        relationsMap[className].inheritance = {
+          isParent,
+          isChild,
+          parentClass,
+          discriminatorValue,
+        };
+      }
+    }
+
+    // Para clases/id embebidos generados por composición
+    const extraModelFiles: { name: string; content: string }[] = [];
 
     for (const edge of edges) {
       const sourceClass = nodeIdToClass[edge.source];
@@ -174,6 +231,143 @@ export class SpringGeneratorService {
         sourceClass.charAt(0).toLowerCase() + sourceClass.slice(1);
       const targetLower =
         targetClass.charAt(0).toLowerCase() + targetClass.slice(1);
+
+      // Ignorar edges de herencia en el procesamiento de relaciones
+      if (edge.data?.type === 'inheritance' || edge.type === 'inheritance') {
+        continue;
+      }
+
+      // COMPOSITION: source (agregado) → target (parte) con PK compuesta
+      if (edge.data?.type === 'composition') {
+        // Lado padre/agregado
+        relationsMap[sourceClass].imports.add('java.util.List');
+        relationsMap[sourceClass].imports.add('jakarta.persistence.OneToMany');
+        relationsMap[sourceClass].imports.add(
+          'jakarta.persistence.CascadeType',
+        );
+        relationsMap[sourceClass].imports.add(
+          'com.fasterxml.jackson.annotation.JsonManagedReference',
+        );
+        relationsMap[sourceClass].fields.push(
+          `    @OneToMany(mappedBy = "${sourceLower}", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonManagedReference("${sourceLower}_composition")
+    private List<${targetClass}> ${targetLower}s;`,
+        );
+
+        // ID compuesto en el hijo: <Target>Id { <parent>Id, id }
+        const childAttrs = attributesMap[targetClass] || [];
+        const childIdAttr = childAttrs.find((a) => a.name === 'id');
+        const childIdJavaType = this.mapType(childIdAttr?.type || 'Long');
+        const idClassName = `${targetClass}Id`;
+
+        relationsMap[targetClass].compositionChild = {
+          idClassName,
+          parentClass: sourceClass,
+          parentLower: sourceLower,
+          childIdJavaType,
+        };
+
+        const idClass = `package com.example.demo.model;
+
+import jakarta.persistence.Embeddable;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
+import java.io.Serializable;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Embeddable
+public class ${idClassName} implements Serializable {
+    private Long ${sourceLower}Id;
+    private ${childIdJavaType} id;
+}`;
+        extraModelFiles.push({ name: `${idClassName}.java`, content: idClass });
+
+        relationsMap[targetClass].imports.add('jakarta.persistence.ManyToOne');
+        relationsMap[targetClass].imports.add('jakarta.persistence.JoinColumn');
+        relationsMap[targetClass].imports.add('jakarta.persistence.MapsId');
+        relationsMap[targetClass].imports.add('jakarta.persistence.EmbeddedId');
+        relationsMap[targetClass].imports.add(
+          'com.fasterxml.jackson.annotation.JsonBackReference',
+        );
+        relationsMap[targetClass].fields.push(
+          `    @EmbeddedId
+    private ${idClassName} id;`,
+        );
+        relationsMap[targetClass].fields.push(
+          `    @ManyToOne(optional = false)
+    @MapsId("${sourceLower}Id")
+    @JoinColumn(name = "${sourceLower}_id")
+    @JsonBackReference("${sourceLower}_composition")
+    private ${sourceClass} ${sourceLower};`,
+        );
+
+        continue;
+      }
+
+      // Caso especial: Asociación con Clase de Asociación (join entity)
+      // Si el edge declara una associationClass, generamos una entidad intermedia
+      // con dos @ManyToOne y en los extremos usamos @OneToMany(mappedBy=...)
+      const associationClassNodeId = edge.data?.associationClass;
+      if (
+        edge.data?.type === 'association' &&
+        associationClassNodeId &&
+        nodeIdToClass[associationClassNodeId]
+      ) {
+        const assocClass = nodeIdToClass[associationClassNodeId];
+        const assocLower =
+          assocClass.charAt(0).toLowerCase() + assocClass.slice(1);
+
+        // Lado fuente: OneToMany a la clase de asociación
+        relationsMap[sourceClass].imports.add('java.util.List');
+        relationsMap[sourceClass].imports.add('jakarta.persistence.OneToMany');
+        relationsMap[sourceClass].imports.add(
+          'com.fasterxml.jackson.annotation.JsonManagedReference',
+        );
+        relationsMap[sourceClass].fields.push(
+          `    @OneToMany(mappedBy = "${sourceLower}")
+    @JsonManagedReference("${sourceLower}_${assocLower}")
+    private List<${assocClass}> ${assocLower}s;`,
+        );
+
+        // Lado target: OneToMany a la clase de asociación
+        relationsMap[targetClass].imports.add('java.util.List');
+        relationsMap[targetClass].imports.add('jakarta.persistence.OneToMany');
+        relationsMap[targetClass].imports.add(
+          'com.fasterxml.jackson.annotation.JsonManagedReference',
+        );
+        relationsMap[targetClass].fields.push(
+          `    @OneToMany(mappedBy = "${targetLower}")
+    @JsonManagedReference("${targetLower}_${assocLower}")
+    private List<${assocClass}> ${assocLower}s;`,
+        );
+
+        // Clase de asociación: dos ManyToOne (hacia source y target)
+        relationsMap[assocClass].imports.add('jakarta.persistence.ManyToOne');
+        relationsMap[assocClass].imports.add('jakarta.persistence.JoinColumn');
+        relationsMap[assocClass].imports.add(
+          'com.fasterxml.jackson.annotation.JsonBackReference',
+        );
+
+        relationsMap[assocClass].fields.push(
+          `    @ManyToOne
+    @JoinColumn(name = "${sourceLower}_id")
+    @JsonBackReference("${sourceLower}_${assocLower}")
+    private ${sourceClass} ${sourceLower};`,
+        );
+
+        relationsMap[assocClass].fields.push(
+          `    @ManyToOne
+    @JoinColumn(name = "${targetLower}_id")
+    @JsonBackReference("${targetLower}")
+    private ${targetClass} ${targetLower};`,
+        );
+
+        // Ya manejado como join-entity, continuar al próximo edge
+        continue;
+      }
 
       if (sourceHasManyTargets && targetHasManySources) {
         // Many-to-Many (lado source propietario)
@@ -208,12 +402,13 @@ export class SpringGeneratorService {
         relationsMap[sourceClass].imports.add(
           'com.fasterxml.jackson.annotation.JsonManagedReference',
         );
-        
+
         // Contar relaciones para evitar conflictos de nombres
         const relationKey = `${sourceClass}-${targetClass}`;
-        const count = relationsMap[sourceClass].relationshipCount[relationKey] || 0;
+        const count =
+          relationsMap[sourceClass].relationshipCount[relationKey] || 0;
         relationsMap[sourceClass].relationshipCount[relationKey] = count + 1;
-        
+
         relationsMap[sourceClass].fields.push(
           `    @OneToMany(mappedBy = "${sourceLower}")
     @JsonManagedReference("${sourceLower}")
@@ -225,12 +420,14 @@ export class SpringGeneratorService {
         relationsMap[targetClass].imports.add(
           'com.fasterxml.jackson.annotation.JsonBackReference',
         );
-        
+
         // Contar relaciones múltiples hacia la misma clase target
         const targetRelationKey = `${targetClass}-${sourceClass}`;
-        const targetCount = relationsMap[targetClass].relationshipCount[targetRelationKey] || 0;
-        relationsMap[targetClass].relationshipCount[targetRelationKey] = targetCount + 1;
-        
+        const targetCount =
+          relationsMap[targetClass].relationshipCount[targetRelationKey] || 0;
+        relationsMap[targetClass].relationshipCount[targetRelationKey] =
+          targetCount + 1;
+
         relationsMap[targetClass].fields.push(
           `    @ManyToOne
     @JoinColumn(name = "${sourceLower}_id")
@@ -244,12 +441,13 @@ export class SpringGeneratorService {
         relationsMap[targetClass].imports.add(
           'com.fasterxml.jackson.annotation.JsonManagedReference',
         );
-        
+
         // Contar relaciones para evitar conflicto
         const relationKey = `${targetClass}-${sourceClass}`;
-        const count = relationsMap[targetClass].relationshipCount[relationKey] || 0;
+        const count =
+          relationsMap[targetClass].relationshipCount[relationKey] || 0;
         relationsMap[targetClass].relationshipCount[relationKey] = count + 1;
-        
+
         relationsMap[targetClass].fields.push(
           `    @OneToMany(mappedBy = "${targetLower}")
     @JsonManagedReference("${targetLower}")
@@ -261,12 +459,14 @@ export class SpringGeneratorService {
         relationsMap[sourceClass].imports.add(
           'com.fasterxml.jackson.annotation.JsonBackReference',
         );
-        
+
         // Contar relaciones múltiples hacia la misma clase source
         const sourceRelationKey = `${sourceClass}-${targetClass}`;
-        const sourceCount = relationsMap[sourceClass].relationshipCount[sourceRelationKey] || 0;
-        relationsMap[sourceClass].relationshipCount[sourceRelationKey] = sourceCount + 1;
-        
+        const sourceCount =
+          relationsMap[sourceClass].relationshipCount[sourceRelationKey] || 0;
+        relationsMap[sourceClass].relationshipCount[sourceRelationKey] =
+          sourceCount + 1;
+
         relationsMap[sourceClass].fields.push(
           `    @ManyToOne
     @JoinColumn(name = "${targetLower}_id")
@@ -322,12 +522,21 @@ export class SpringGeneratorService {
         'utf8',
       );
 
-      const ctrl = this.buildController(className); // <— con produces/consumes
+      const ctrl = this.buildController(
+        className,
+        rel?.inheritance?.isChild,
+        rel?.inheritance?.parentClass,
+      ); // <— con produces/consumes
       fs.writeFileSync(
         path.join(controllerDir, `${className}Controller.java`),
         ctrl,
         'utf8',
       );
+    }
+
+    // escribir modelos auxiliares (Ids embebidos)
+    for (const f of extraModelFiles) {
+      fs.writeFileSync(path.join(modelDir, f.name), f.content, 'utf8');
     }
   }
 
@@ -426,9 +635,13 @@ public class ${className}Service {
   // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
   // CAMBIO IMPORTANTE: controller con produces/consumes explícitos
   // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-  private buildController(className: string) {
+  private buildController(
+    className: string,
+    isInheritanceChild?: boolean,
+    parentClass?: string,
+  ) {
     const lower = className.charAt(0).toLowerCase() + className.slice(1);
-    return `package com.example.demo.controller;
+    const baseController = `package com.example.demo.controller;
 
 import com.example.demo.model.${className};
 import com.example.demo.service.${className}Service;
@@ -436,6 +649,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/${lower}")
@@ -473,30 +687,82 @@ public class ${className}Controller {
         service.delete(id);
         return ResponseEntity.noContent().build();
     }
+}`;
+
+    // Si es clase hija, agregar endpoints específicos que filtren por tipo
+    if (isInheritanceChild && parentClass) {
+      // Remover la última llave de cierre de la clase
+      const baseControllerWithoutClosing = baseController.replace(/\}\s*$/, '');
+
+      return (
+        baseControllerWithoutClosing +
+        `
+
+    // Endpoints específicos para ${className} (filtrados por tipo)
+    @GetMapping(path = "/${lower}s", produces = MediaType.APPLICATION_JSON_VALUE)
+    public List<${className}> all${className}s() {
+        return service.findAll().stream()
+                .filter(v -> v instanceof ${className})
+                .map(v -> (${className}) v)
+                .collect(Collectors.toList());
+    }
+
+    @GetMapping(path = "/${lower}s/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<${className}> get${className}(@PathVariable Long id) {
+        return service.findById(id)
+                .filter(v -> v instanceof ${className})
+                .map(v -> (${className}) v)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
 }
-`;
+`
+      );
+    }
+
+    return baseController;
   }
 
   private buildEntityWithRelations(
     className: string,
     attributes: ModelNodeAttr[],
-    rel: { fields: string[]; imports: Set<string> } | undefined,
+    rel:
+      | {
+          fields: string[];
+          imports: Set<string>;
+          inheritance?: {
+            isParent: boolean;
+            isChild: boolean;
+            parentClass?: string;
+            discriminatorValue?: string;
+          };
+          compositionChild?: {
+            idClassName: string;
+            parentClass: string;
+            parentLower: string;
+            childIdJavaType: string;
+          };
+        }
+      | undefined,
   ) {
     const fields: string[] = [];
 
-    // id
-    const hasId = attributes?.some((a) => a.name === 'id');
-    if (!hasId) {
-      fields.push(
-        `    @Id
+    // id: si es hijo en herencia JOINED, NO declarar id aquí (usa PK del padre)
+    const isInheritanceChild = !!rel?.inheritance?.isChild;
+    if (!isInheritanceChild) {
+      const hasId = attributes?.some((a) => a.name === 'id');
+      if (!hasId) {
+        fields.push(
+          `    @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;`,
-      );
-    } else {
-      fields.push(
-        `    @Id
+        );
+      } else {
+        fields.push(
+          `    @Id
     private Long id;`,
-      );
+        );
+      }
     }
 
     // atributos simples
@@ -516,11 +782,48 @@ public class ${className}Controller {
       'import com.fasterxml.jackson.annotation.JsonBackReference;',
       'import com.fasterxml.jackson.annotation.JsonManagedReference;',
     ]);
+    // Importes adicionales para herencia
+    if (rel?.inheritance?.isParent) {
+      imports.add('import jakarta.persistence.Inheritance;');
+      imports.add('import jakarta.persistence.InheritanceType;');
+      imports.add('import jakarta.persistence.DiscriminatorColumn;');
+      imports.add('import jakarta.persistence.DiscriminatorType;');
+      imports.add('import jakarta.persistence.DiscriminatorValue;');
+    }
+    if (rel?.inheritance?.isChild) {
+      imports.add('import jakarta.persistence.DiscriminatorValue;');
+      imports.add('import jakarta.persistence.PrimaryKeyJoinColumn;');
+    }
     if (rel?.imports) {
       for (const imp of rel.imports) imports.add(`import ${imp};`);
     }
 
     // ⬇️⮕ AQUÍ construimos el body con @NoArgsConstructor y @AllArgsConstructor
+    // Anotaciones de herencia a nivel de clase
+    const classAnnotations: string[] = [];
+    if (rel?.inheritance?.isParent) {
+      classAnnotations.push(
+        '@Inheritance(strategy = InheritanceType.JOINED)',
+        '@DiscriminatorColumn(name = "tipoHijo", discriminatorType = DiscriminatorType.STRING, length = 1)',
+      );
+      // Valor por defecto cuando se persiste el padre (H2 exige un char(1))
+      const dvParent = className.charAt(0).toUpperCase();
+      classAnnotations.push(`@DiscriminatorValue("${dvParent}")`);
+    }
+    if (rel?.inheritance?.isChild && rel.inheritance.parentClass) {
+      const dv =
+        rel.inheritance.discriminatorValue || className.charAt(0).toUpperCase();
+      classAnnotations.push(
+        `@DiscriminatorValue("${dv}")`,
+        '@PrimaryKeyJoinColumn(name = "id")',
+      );
+    }
+
+    const extendsClause =
+      rel?.inheritance?.isChild && rel.inheritance?.parentClass
+        ? ` extends ${rel.inheritance.parentClass}`
+        : '';
+
     const body = `package com.example.demo.model;
 
 ${Array.from(imports).join('\n')}
@@ -531,7 +834,8 @@ import lombok.AllArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @Entity
-public class ${className} {
+${classAnnotations.join('\n')}
+public class ${className}${extendsClause} {
 ${fields.join('\n\n')}
 
 ${relFields.join('\n\n')}
