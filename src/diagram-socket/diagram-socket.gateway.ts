@@ -139,4 +139,127 @@ export class DiagramSocketGateway
     console.log(response.text);
     client.emit('agent-generated', { text: response.text });
   }
+
+  @SubscribeMessage('generate-diagram')
+  async handleGenerateDiagram(
+    @MessageBody() data: { prompt: string; diagramId: string },
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
+    try {
+      const systemPrompt = `
+Eres un experto en UML y diseño de diagramas de clases. Tu tarea es generar un diagrama UML en formato JSON basado en la descripción del usuario.
+
+Formato esperado del JSON:
+{
+  "edges": [
+    {
+      "id": "edge-[sourceId]-[targetId]-[type]-[timestamp]",
+      "data": {
+        "type": "inheritance|association|aggregation|composition|realization|dependency",
+        "label": "etiqueta de la relación",
+        "sourceCardinality": "cardinalidad del origen (ej: 1..1, 1..*, 0..1)",
+        "targetCardinality": "cardinalidad del destino"
+      },
+      "type": "inheritance|association|aggregation|composition|realization|dependency",
+      "source": "node-[timestamp]",
+      "target": "node-[timestamp]",
+      "sourceHandle": "bottom|top|left|right|bottom-left|bottom-right|top-left|top-right",
+      "targetHandle": "bottom|top|left|right|bottom-left|bottom-right|top-left|top-right"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "node-[timestamp]",
+      "data": {
+        "label": "NombreClase",
+        "methods": [
+          {
+            "id": "method-[timestamp]",
+            "name": "nombreMetodo",
+            "type": "tipoRetorno",
+            "visibility": "public|private|protected",
+            "parameters": [
+              {
+                "name": "parametro",
+                "type": "tipo"
+              }
+            ]
+          }
+        ],
+        "attributes": [
+          {
+            "id": "attr-[timestamp]",
+            "name": "nombreAtributo",
+            "type": "int|string|boolean|double|float|Date|etc",
+            "visibility": "public|private|protected"
+          }
+        ]
+      },
+      "type": "textUpdater",
+      "position": {
+        "x": 100 + (index * 300),
+        "y": 100 + (index * 200)
+      }
+    }
+  ],
+  "metadata": {
+    "version": "1.0",
+    "lastModified": "fecha actual"
+  }
+}
+
+Reglas importantes:
+1. Genera IDs únicos usando timestamps
+2. Para herencia, usa type: "inheritance" y sourceHandle/targetHandle apropiados
+3. Para asociaciones, usa type: "association" con cardinalidades apropiadas
+4. Posiciona las clases de manera que no se solapen
+5. Usa tipos de datos apropiados (int, string, boolean, etc.)
+6. Incluye atributos y métodos relevantes para cada clase
+7. Responde ÚNICAMENTE con el JSON válido, SIN markdown, SIN explicaciones, SOLO el objeto JSON puro
+
+Descripción del usuario: ${data.prompt}
+`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: systemPrompt,
+      });
+
+      // Limpiar la respuesta de cualquier markdown
+      let cleanText = response.text || '{}';
+      cleanText = cleanText
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+
+      const diagramJson = JSON.parse(cleanText);
+
+      // Actualizar el diagrama en la base de datos
+      const updatedDiagram = await this.diagramService.update(data.diagramId, {
+        model: diagramJson,
+      });
+
+      // Emitir la respuesta al cliente
+      client.emit('diagram-generated', {
+        success: true,
+        diagram: diagramJson,
+        message: 'Diagrama generado exitosamente',
+      });
+
+      // Broadcast a todos los clientes en la room del diagrama
+      const room = `diagram:${data.diagramId}`;
+      client.to(room).emit('diagram-updated', {
+        id: updatedDiagram.id,
+        model: updatedDiagram.model,
+      });
+    } catch (error) {
+      console.error('Error generating diagram:', error);
+      client.emit('diagram-generated', {
+        success: false,
+        error:
+          'Error al generar el diagrama. Por favor, intenta con una descripción más específica.',
+        message: error.message,
+      });
+    }
+  }
 }
