@@ -16,9 +16,14 @@ import { JwtService } from '@nestjs/jwt';
 import { CreateDiagramInviteDto } from 'src/diagram_invites/dto/create-diagram_invite.dto';
 import { DiagramsService } from 'src/diagrams/diagrams.service';
 
+// importar GoogleGenAI
+import { GoogleGenAI } from '@google/genai';
+
+const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
+
 @WebSocketGateway({
   cors: {
-    origin: ['http://localhost:3000'], // ajusta si tu frontend corre en otra URL
+    origin: ['http://localhost:3000', 'http://54.207.207.246:3000'], // ajusta si tu frontend corre en otra URL
     credentials: true,
   },
   namespace: '/', // default
@@ -120,5 +125,18 @@ export class DiagramSocketGateway
 
     // ACK al emisor (sin el modelo completo para ahorrar ancho de banda)
     client.emit('diagram-updated:ack', { id, ok: true });
+  }
+
+  @SubscribeMessage('generate-agent')
+  async handleGenerateAgent(
+    @MessageBody() data: any,
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: data.prompt,
+    });
+    console.log(response.text);
+    client.emit('agent-generated', { text: response.text });
   }
 }
