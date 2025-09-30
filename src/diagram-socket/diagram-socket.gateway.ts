@@ -180,7 +180,8 @@ Formato esperado del JSON:
             "type": "int|string|boolean|double|float|Date|etc",
             "visibility": "public|private|protected"
           }
-        ]
+        ],
+        "isAssociationClass": false
       },
       "type": "textUpdater",
       "position": {
@@ -193,6 +194,62 @@ Formato esperado del JSON:
     "version": "1.0",
     "lastModified": "fecha actual"
   }
+}
+
+EJEMPLO de relación muchos-a-muchos (Usuario-Producto):
+{
+  "nodes": [
+    {
+      "id": "node-1234567890",
+      "data": {
+        "label": "Usuario",
+        "methods": [],
+        "attributes": [{"id": "attr-1", "name": "id", "type": "int", "visibility": "private"}, {"id": "attr-2", "name": "nombre", "type": "string", "visibility": "public"}],
+        "isAssociationClass": false
+      },
+      "type": "textUpdater",
+      "position": {"x": 100, "y": 100}
+    },
+    {
+      "id": "node-1234567891", 
+      "data": {
+        "label": "Producto",
+        "methods": [],
+        "attributes": [{"id": "attr-3", "name": "id", "type": "int", "visibility": "private"}, {"id": "attr-4", "name": "nombre", "type": "string", "visibility": "public"}],
+        "isAssociationClass": false
+      },
+      "type": "textUpdater",
+      "position": {"x": 500, "y": 100}
+    },
+    {
+      "id": "association-1234567892",
+      "data": {
+        "label": "Compra",
+        "methods": [],
+        "attributes": [{"id": "attr-5", "name": "cantidad", "type": "int", "visibility": "private"}, {"id": "attr-6", "name": "fecha", "type": "Date", "visibility": "private"}],
+        "isAssociationClass": true
+      },
+      "type": "textUpdater",
+      "position": {"x": 300, "y": 300}
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-1234567890-1234567891-association-1234567893",
+      "type": "association",
+      "source": "node-1234567890",
+      "target": "node-1234567891",
+      "sourceHandle": "bottom",
+      "targetHandle": "bottom",
+      "data": {
+        "type": "association",
+        "sourceCardinality": "*",
+        "targetCardinality": "*",
+        "label": "compra",
+        "associationClass": "association-1234567892"
+      }
+    }
+  ]
 }
 
 Reglas importantes:
@@ -210,10 +267,20 @@ Reglas importantes:
 Descripción del usuario: ${data.prompt}
 
 IMPORTANTE: Si el usuario menciona múltiples clases, DEBES crear relaciones entre ellas. Ejemplos:
-- Usuario y Producto: asociación "compra" (Usuario 1..* Producto)
+- Usuario y Producto: relación muchos-a-muchos con clase de asociación intermedia
 - Si hay clases similares: crear herencia cuando sea apropiado
 - Si hay jerarquías: crear herencia (ej: Vehiculo -> Auto, Camion)
-- Siempre incluye al menos una relación si hay más de una clase
+
+Para relaciones muchos-a-muchos (como Usuario-Producto), crear:
+1. Una clase de asociación intermedia (ej: "Compra" o "Pedido")
+2. Una relación principal entre las clases con:
+   - type: "association"
+   - sourceCardinality: "*"
+   - targetCardinality: "*"
+   - associationClass: [id-de-la-clase-intermedia]
+3. La clase intermedia debe tener isAssociationClass: true
+
+OBLIGATORIO: Siempre incluye al menos una relación si hay más de una clase. NUNCA dejes el diagrama sin edges.
 `;
 
       const response = await ai.models.generateContent({
@@ -228,7 +295,14 @@ IMPORTANTE: Si el usuario menciona múltiples clases, DEBES crear relaciones ent
         .replace(/```\n?/g, '')
         .trim();
 
+      console.log('🤖 Raw AI response:', response.text);
+      console.log('🧹 Cleaned text:', cleanText);
+
       const diagramJson = JSON.parse(cleanText);
+      console.log(
+        '📊 Parsed diagram JSON:',
+        JSON.stringify(diagramJson, null, 2),
+      );
 
       // Actualizar el diagrama en la base de datos
       const updatedDiagram = await this.diagramService.update(data.diagramId, {
