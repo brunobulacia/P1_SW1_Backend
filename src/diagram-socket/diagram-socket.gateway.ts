@@ -172,20 +172,7 @@ Formato esperado del JSON:
       "id": "node-[timestamp]",
       "data": {
         "label": "NombreClase",
-        "methods": [
-          {
-            "id": "method-[timestamp]",
-            "name": "nombreMetodo",
-            "type": "tipoRetorno",
-            "visibility": "public|private|protected",
-            "parameters": [
-              {
-                "name": "parametro",
-                "type": "tipo"
-              }
-            ]
-          }
-        ],
+        "methods": [],
         "attributes": [
           {
             "id": "attr-[timestamp]",
@@ -210,14 +197,23 @@ Formato esperado del JSON:
 
 Reglas importantes:
 1. Genera IDs únicos usando timestamps
-2. Para herencia, usa type: "inheritance" y sourceHandle/targetHandle apropiados
-3. Para asociaciones, usa type: "association" con cardinalidades apropiadas
-4. Posiciona las clases de manera que no se solapen
-5. Usa tipos de datos apropiados (int, string, boolean, etc.)
-6. Incluye atributos y métodos relevantes para cada clase
-7. Responde ÚNICAMENTE con el JSON válido, SIN markdown, SIN explicaciones, SOLO el objeto JSON puro
+2. SIEMPRE incluye relaciones entre las clases (edges) - NO dejes el diagrama sin relaciones
+3. Para herencia, usa type: "inheritance" y sourceHandle/targetHandle apropiados
+4. Para asociaciones, usa type: "association" con cardinalidades apropiadas (ej: "1..1", "1..*", "0..1")
+5. Posiciona las clases de manera que no se solapen
+6. Usa tipos de datos apropiados (int, string, boolean, etc.)
+7. Incluye SOLO atributos relevantes para cada clase, NO incluyas métodos
+8. Siempre deja el array "methods" vacío: "methods": []
+9. Si hay múltiples clases, crea relaciones lógicas entre ellas (asociaciones, herencia, etc.)
+10. Responde ÚNICAMENTE con el JSON válido, SIN markdown, SIN explicaciones, SOLO el objeto JSON puro
 
 Descripción del usuario: ${data.prompt}
+
+IMPORTANTE: Si el usuario menciona múltiples clases, DEBES crear relaciones entre ellas. Ejemplos:
+- Usuario y Producto: asociación "compra" (Usuario 1..* Producto)
+- Si hay clases similares: crear herencia cuando sea apropiado
+- Si hay jerarquías: crear herencia (ej: Vehiculo -> Auto, Camion)
+- Siempre incluye al menos una relación si hay más de una clase
 `;
 
       const response = await ai.models.generateContent({
