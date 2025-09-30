@@ -19,7 +19,7 @@ import { DiagramsService } from 'src/diagrams/diagrams.service';
 // importar GoogleGenAI
 import { GoogleGenAI } from '@google/genai';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 @WebSocketGateway({
   cors: {
@@ -283,10 +283,51 @@ Para relaciones muchos-a-muchos (como Usuario-Producto), crear:
 OBLIGATORIO: Siempre incluye al menos una relación si hay más de una clase. NUNCA dejes el diagrama sin edges.
 `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: systemPrompt,
-      });
+      // Intentar con diferentes modelos y reintentos
+      let response;
+      let lastError;
+
+      const models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+
+      for (const model of models) {
+        try {
+          console.log(`🤖 Intentando con modelo: ${model}`);
+          response = await ai.models.generateContent({
+            model: model,
+            contents: [
+              { role: 'user', parts: [{ text: systemPrompt }] },
+              {
+                role: 'user',
+                parts: [
+                  { text: `Genera un diagrama UML basado en: ${data.prompt}` },
+                ],
+              },
+            ],
+          });
+          console.log(`✅ Éxito con modelo: ${model}`);
+          break; // Si funciona, salir del loop
+        } catch (error) {
+          console.log(`❌ Error con modelo ${model}:`, error.message);
+          lastError = error;
+
+          // Si es error 503 (sobrecarga), esperar un poco y continuar con el siguiente modelo
+          if (error.status === 503) {
+            console.log(
+              `⏳ Modelo ${model} sobrecargado, probando siguiente...`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, 1000)); // Esperar 1 segundo
+            continue;
+          }
+
+          // Si no es 503, lanzar el error inmediatamente
+          throw error;
+        }
+      }
+
+      // Si llegamos aquí y no hay response, todos los modelos fallaron
+      if (!response) {
+        throw lastError || new Error('Todos los modelos de IA fallaron');
+      }
 
       // Limpiar la respuesta de cualquier markdown
       let cleanText = response.text || '{}';
