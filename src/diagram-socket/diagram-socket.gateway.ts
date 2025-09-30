@@ -48,7 +48,31 @@ export class DiagramSocketGateway
   }
 
   handleDisconnect(client: Socket) {
+    console.log(`🔌 Cliente desconectado: ${client.id}`);
+
+    // Obtener todas las rooms donde estaba este cliente
+    const allRooms = this.diagramSocketService.getAllDiagramRooms();
+
+    // Remover el cliente de todas las rooms y notificar a los participantes restantes
+    allRooms.forEach((diagramId) => {
+      const participants =
+        this.diagramSocketService.removeParticipantFromDiagram(
+          diagramId,
+          client,
+        );
+      console.log(
+        `👥 Participantes restantes en diagrama ${diagramId}:`,
+        participants.length,
+      );
+
+      // Notificar a los participantes restantes en esta room
+      const room = `diagram:${diagramId}`;
+      this.wss.to(room).emit('participants-updated', { participants });
+    });
+
+    // Remover el cliente del tracking general
     this.diagramSocketService.removeClient(client);
+
     this.wss.emit('message', {
       conexiones: this.diagramSocketService.getClientCount(),
     });
@@ -103,6 +127,25 @@ export class DiagramSocketGateway
       data.diagramId,
     );
     client.emit('participants-updated', { participants });
+  }
+
+  @SubscribeMessage('heartbeat')
+  handleHeartbeat(
+    @MessageBody() data: { diagramId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    // Actualizar timestamp del participante para mantenerlo activo
+    const participants = this.diagramSocketService.getDiagramParticipants(
+      data.diagramId,
+    );
+    const participant = participants.find((p) => p.socketId === client.id);
+
+    if (participant) {
+      participant.joinedAt = new Date();
+      console.log(
+        `💓 Heartbeat recibido de ${client.id} en diagrama ${data.diagramId}`,
+      );
+    }
   }
 
   @SubscribeMessage('generate-invite')

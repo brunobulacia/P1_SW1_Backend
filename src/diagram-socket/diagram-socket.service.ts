@@ -102,4 +102,8 @@ export class DiagramSocketService {
   getDiagramParticipantCount(diagramId: string): number {
     return this.diagramRooms[diagramId]?.length || 0;
   }
+
+  getAllDiagramRooms(): string[] {
+    return Object.keys(this.diagramRooms);
+  }
 }
