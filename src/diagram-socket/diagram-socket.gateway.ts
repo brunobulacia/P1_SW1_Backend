@@ -61,6 +61,18 @@ export class DiagramSocketGateway
   ) {
     const room = `diagram:${data.diagramId}`;
     client.join(room);
+
+    // Agregar participante al tracking
+    const participants = this.diagramSocketService.addParticipantToDiagram(
+      String(data.diagramId),
+      client,
+    );
+
+    // Notificar a todos en la room sobre los participantes actualizados
+    client.to(room).emit('participants-updated', { participants });
+
+    // Enviar lista actual de participantes al nuevo participante
+    client.emit('participants-updated', { participants });
     client.emit('joined-diagram', { diagramId: data.diagramId });
   }
 
@@ -71,6 +83,26 @@ export class DiagramSocketGateway
   ) {
     const room = `diagram:${data.diagramId}`;
     client.leave(room);
+
+    // Remover participante del tracking
+    const participants = this.diagramSocketService.removeParticipantFromDiagram(
+      String(data.diagramId),
+      client,
+    );
+
+    // Notificar a los participantes restantes
+    client.to(room).emit('participants-updated', { participants });
+  }
+
+  @SubscribeMessage('get-participants')
+  handleGetParticipants(
+    @MessageBody() data: { diagramId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const participants = this.diagramSocketService.getDiagramParticipants(
+      data.diagramId,
+    );
+    client.emit('participants-updated', { participants });
   }
 
   @SubscribeMessage('generate-invite')
